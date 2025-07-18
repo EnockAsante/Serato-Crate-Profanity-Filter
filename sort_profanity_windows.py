@@ -3,7 +3,6 @@ import re
 import requests  # Import requests to catch its exceptions
 from header import *
 
-
 # --- Configure Logging ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -16,6 +15,7 @@ SPOTIFY_CACHE_FILE = 'spotify_cache_cmd.json'
 GENIUS_CACHE_FILE = 'genius_cache_cmd.json'
 spotify_cache, genius_cache = {}, {}
 sp, genius = None, None
+
 
 def initialize_apis_and_caches():
     """Initializes all external services and loads caches."""
@@ -44,11 +44,13 @@ def initialize_apis_and_caches():
         logging.error(f"Error initializing LyricsGenius: {e}")
         genius = None
 
+
 def is_profane_custom(lyrics: str) -> bool:
     lyrics_lower = lyrics.lower()
     for word in CUSTOM_BANNED_WORDS:
         if re.search(r'\b' + re.escape(word) + r'\b', lyrics_lower): return True
     return False
+
 
 def get_spotify_data(title_query: str, artist_query: str | None) -> dict:
     search_key = f"{title_query}|{artist_query or ''}"
@@ -88,6 +90,7 @@ def get_spotify_data(title_query: str, artist_query: str | None) -> dict:
 
     spotify_cache[search_key] = spotify_data
     return spotify_data
+
 
 def get_lyrics_from_genius(title: str, artist: str | None) -> str | None:
     search_key = f"{title}|{artist or ''}"

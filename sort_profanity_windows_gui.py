@@ -9,7 +9,6 @@ from header import *
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
-
 # --- ProfanityFilter setup ---
 def get_profanity_filter(custom_words=None):
     pf = ProfanityFilter()
@@ -17,8 +16,10 @@ def get_profanity_filter(custom_words=None):
         pf.define_words(list(custom_words))
     return pf
 
+
 def is_profane(lyrics: str, pf: ProfanityFilter) -> bool:
     return pf.is_profane(lyrics)
+
 
 # --- Spotify lookup (with offline mode) ---
 def get_spotify_data(title_query: str, artist_query: str | None) -> dict:
@@ -65,16 +66,17 @@ def get_spotify_data(title_query: str, artist_query: str | None) -> dict:
                 if se.http_status == 429:
                     retry_after = int(se.headers.get('Retry-After', 1))
                     retry_times.append(retry_after)
-                    logging.warning(f"Spotify API {client_idx+1} rate limit hit. Retrying after {retry_after} seconds.")
+                    logging.warning(
+                        f"Spotify API {client_idx + 1} rate limit hit. Retrying after {retry_after} seconds.")
                     if client_idx == attempts[-1]:
                         time.sleep(retry_after + 1)
                     else:
                         break
                 else:
-                    logging.error(f"Spotify API error for '{q}' (Attempt {attempt+1}): {se}")
+                    logging.error(f"Spotify API error for '{q}' (Attempt {attempt + 1}): {se}")
                     break
             except Exception as e:
-                logging.error(f"Spotify API error for '{q}' (Attempt {attempt+1}): {e}")
+                logging.error(f"Spotify API error for '{q}' (Attempt {attempt + 1}): {e}")
                 break
             time.sleep(1.5)
     if retry_times:
@@ -84,6 +86,7 @@ def get_spotify_data(title_query: str, artist_query: str | None) -> dict:
     spotify_cache[search_key] = spotify_data
     save_cache(spotify_cache, SPOTIFY_CACHE_FILE)
     return spotify_data
+
 
 # --- Genius lyrics lookup ---
 def get_lyrics_from_genius(title: str, artist: str | None) -> str | None:
@@ -109,6 +112,7 @@ def get_lyrics_from_genius(title: str, artist: str | None) -> str | None:
     genius_cache[search_key] = lyrics
     return lyrics
 
+
 # --- Crate processing ---
 def process_crate_file(crate_file_path: str, pause_event, stop_event, pf: ProfanityFilter):
     try:
@@ -128,7 +132,8 @@ def process_crate_file(crate_file_path: str, pause_event, stop_event, pf: Profan
         while pause_event.is_set():
             time.sleep(0.2)
         if item_type == 'otrk':
-            full_path = item_data[0][1] if isinstance(item_data, list) and item_data and item_data[0][0] == 'ptrk' else None
+            full_path = item_data[0][1] if isinstance(item_data, list) and item_data and item_data[0][
+                0] == 'ptrk' else None
             if not full_path:
                 results_summary["SKIPPED"] += 1
                 continue
@@ -143,7 +148,8 @@ def process_crate_file(crate_file_path: str, pause_event, stop_event, pf: Profan
                 artist_genres = spotify_data['genres']
 
             display_artist = verified_artist if verified_artist else 'Unknown'
-            logging.info(f"Processing: '{verified_title}' by '{display_artist}' (Original: '{os.path.basename(full_path)}')")
+            logging.info(
+                f"Processing: '{verified_title}' by '{display_artist}' (Original: '{os.path.basename(full_path)}')")
             if artist_genres:
                 logging.info(f" -> Genres: {', '.join(artist_genres)}")
 
