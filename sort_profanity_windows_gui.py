@@ -17,7 +17,7 @@ import requests
 from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3NoHeaderError
 from PIL import Image, ImageTk
-
+import threading
 class QueueHandler(logging.Handler):
     def __init__(self, log_queue):
         super().__init__()
@@ -29,16 +29,18 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 GENIUS_ACCESS_TOKEN = "eqzmComDvRqrsRFxh1caK40pEdbiWLQi2ddO5BU6_sNYiR-eQpyReFlAice5dbCX"
 
-# Two Spotify accounts
+# you can insert you spotify client here
+
 SPOTIPY_CLIENTS = [
+
+    {
+        'client_id': '9bbece559c344a4385aab976d35793c4',
+        'client_secret': 'c7b219d11048464aa896da9b9096127b'
+    },
     {
 
         'client_id': '72d3c94fa5af4dba99b86b3db9c09244',
         'client_secret': 'a891a7b7ae7b4c62996223266bd19b96'
-    },
-    {
-        'client_id': '9bbece559c344a4385aab976d35793c4',
-        'client_secret': 'aa09116bbd904e80accb056d16917609'
     }
 ]
 
@@ -63,28 +65,63 @@ def save_cache(cache_data, cache_file):
     with open(cache_file, 'w', encoding='utf-8') as f:
         json.dump(cache_data, f, ensure_ascii=False, indent=4)
 
+
+
+def try_spotify_client(creds, idx, result_dict, event):
+    try:
+        auth_manager = SpotifyClientCredentials(client_id=creds['client_id'], client_secret=creds['client_secret'])
+        sp = spotipy.Spotify(auth_manager=auth_manager, requests_timeout=15)
+        # Test connection
+        if sp.search(q='track:test', type='track', limit=1):
+            logging.info(f"Successfully connected to Spotify API (account {idx+1}).")
+            result_dict['client'] = sp
+            result_dict['index'] = idx
+            event.set()
+        else:
+            raise Exception("Spotify authentication failed.")
+    except Exception as e:
+        logging.error(f"Error initializing Spotify API client {idx+1}: {e}")
+
 def initialize_apis_and_caches():
     global sp_clients, sp_current, genius, spotify_cache, genius_cache
     spotify_cache, genius_cache = load_cache(SPOTIFY_CACHE_FILE), load_cache(GENIUS_CACHE_FILE)
     logging.info(f"Loaded {len(spotify_cache)} items from Spotify cache and {len(genius_cache)} from Genius cache.")
 
-    # Initialize both Spotify clients
+    # Try to initialize one Spotify client at a time, but don't wait forever
+    result = {}
+    event = threading.Event()
+    threads = []
     for i, creds in enumerate(SPOTIPY_CLIENTS):
-        try:
-            auth_manager = SpotifyClientCredentials(client_id=creds['client_id'], client_secret=creds['client_secret'])
-            sp_clients[i] = spotipy.Spotify(auth_manager=auth_manager, requests_timeout=15)
-            # Test connection
-            if sp_clients[i].search(q='track:test', type='track', limit=1):
-                logging.info(f"Successfully connected to Spotify API (account {i+1}).")
-            else:
-                raise Exception("Spotify authentication failed.")
-        except Exception as e:
-            logging.error(f"Error initializing Spotify API client {i+1}: {e}")
-            sp_clients[i] = None
+        t = threading.Thread(target=try_spotify_client, args=(creds, i, result, event))
+        threads.append(t)
+        t.start()
+        # Wait up to 10 seconds for this client to succeed
+        if event.wait(timeout=10):
+            break  # One client succeeded, stop starting new ones
 
-    # Start with the first available client
-    sp_current = 0 if sp_clients[0] else 1
+    # Wait for all threads to finish (in case both were started)
+    for t in threads:
+        t.join(timeout=1)
 
+    # Set up the clients array
+    sp_clients[:] = [None, None]
+    if 'client' in result:
+        sp_clients[result['index']] = result['client']
+        sp_current = result['index']
+        # Try to initialize the other client in the background (optional)
+        for i, creds in enumerate(SPOTIPY_CLIENTS):
+            if i != result['index']:
+                try:
+                    auth_manager = SpotifyClientCredentials(client_id=creds['client_id'], client_secret=creds['client_secret'])
+                    sp_clients[i] = spotipy.Spotify(auth_manager=auth_manager, requests_timeout=15)
+                    if sp_clients[i].search(q='track:test', type='track', limit=1):
+                        logging.info(f"Background: Successfully connected to Spotify API (account {i+1}).")
+                except Exception as e:
+                    logging.error(f"Background: Error initializing Spotify API client {i+1}: {e}")
+    else:
+        logging.error("Could not initialize any Spotify API client.")
+
+    # Genius initialization
     try:
         genius = lyricsgenius.Genius(GENIUS_ACCESS_TOKEN, verbose=False, remove_section_headers=True, timeout=15)
         logging.info("Successfully initialized LyricsGenius client.")
