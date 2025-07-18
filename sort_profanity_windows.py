@@ -1,17 +1,8 @@
 import serato_crate.serato_crate as srt
-import lyricsgenius
-from profanityfilter import ProfanityFilter
-import os
 import re
-import unicodedata
-import spotipy
-from spotipy.oauth2 import SpotifyClientCredentials
 import requests  # Import requests to catch its exceptions
-import json
-import time
-import logging
-from mutagen.easyid3 import EasyID3
-from mutagen.id3 import ID3NoHeaderError
+from header import *
+
 
 # --- Configure Logging ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -21,26 +12,10 @@ GENIUS_ACCESS_TOKEN = "nwedEcNS-JLlDgTuqdaZNm-eh4-mzTJ2v3KTs1VLl65PmM8DhEep153cv
 SPOTIPY_CLIENT_ID = '72d3c94fa5af4dba99b86b3db9c09244'
 SPOTIPY_CLIENT_SECRET = 'a891a7b7ae7b4c62996223266bd19b96'
 CUSTOM_BANNED_WORDS = {"fuck", "shit", "cunt", "asshole", "bitch", "dick", "pussy", "nigger", "faggot"}
-SPOTIFY_CACHE_FILE = 'spotify_cache.json'
-GENIUS_CACHE_FILE = 'genius_cache.json'
+SPOTIFY_CACHE_FILE = 'spotify_cache_cmd.json'
+GENIUS_CACHE_FILE = 'genius_cache_cmd.json'
 spotify_cache, genius_cache = {}, {}
 sp, genius = None, None
-
-
-def load_cache(cache_file):
-    if os.path.exists(cache_file):
-        try:
-            with open(cache_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except json.JSONDecodeError:
-            return {}
-    return {}
-
-
-def save_cache(cache_data, cache_file):
-    with open(cache_file, 'w', encoding='utf-8') as f:
-        json.dump(cache_data, f, ensure_ascii=False, indent=4)
-
 
 def initialize_apis_and_caches():
     """Initializes all external services and loads caches."""
@@ -69,48 +44,11 @@ def initialize_apis_and_caches():
         logging.error(f"Error initializing LyricsGenius: {e}")
         genius = None
 
-
-def find_crate_files(directory_path: str) -> list[str]:
-    crate_files_to_process = []
-    for root, _, files in os.walk(directory_path):
-        for file in files:
-            if not file.lower().endswith('.crate') or file.lower().endswith('_clean.crate'): continue
-            original_path = os.path.join(root, file)
-            clean_crate_path = os.path.join(root, f"{os.path.splitext(file)[0]}_CLEAN.crate")
-            if not os.path.exists(clean_crate_path) or (
-                    os.path.getmtime(original_path) > os.path.getmtime(clean_crate_path)):
-                if os.path.exists(clean_crate_path): logging.info(
-                    f"'{os.path.basename(original_path)}' has been modified. Queued for reprocessing.")
-                crate_files_to_process.append(original_path)
-            else:
-                logging.info(f"Skipping '{os.path.basename(original_path)}' as up-to-date '_CLEAN.crate' exists.")
-    return crate_files_to_process
-
-
 def is_profane_custom(lyrics: str) -> bool:
     lyrics_lower = lyrics.lower()
     for word in CUSTOM_BANNED_WORDS:
         if re.search(r'\b' + re.escape(word) + r'\b', lyrics_lower): return True
     return False
-
-
-def get_initial_song_info(file_path: str) -> tuple[str, str | None]:
-    try:
-        audio = EasyID3(file_path)
-        title = audio.get('title', [None])[0]
-        artist = audio.get('artist', [None])[0]
-        if title: return title, artist
-    except (ID3NoHeaderError, KeyError, Exception):
-        pass
-    filename = os.path.splitext(os.path.basename(file_path))[0]
-    name_normalized = unicodedata.normalize('NFKD', filename).encode('ascii', 'ignore').decode('utf-8')
-    junk_patterns = [r'\(.*?\)', r'\[.*?\]', r'[\-_]', 'Official', 'Audio', 'Video', 'HD', 'HQ', '4K']
-    cleaned_name = re.sub('|'.join(junk_patterns), ' ', name_normalized, flags=re.IGNORECASE)
-    cleaned_name = re.sub(r'\s+', ' ', cleaned_name).strip()
-    match_artist_title = re.search(r'(.+?)\s-\s(.+)$', cleaned_name)
-    if match_artist_title: return match_artist_title.group(2).strip(), match_artist_title.group(1).strip()
-    return cleaned_name, None
-
 
 def get_spotify_data(title_query: str, artist_query: str | None) -> dict:
     search_key = f"{title_query}|{artist_query or ''}"
@@ -150,7 +88,6 @@ def get_spotify_data(title_query: str, artist_query: str | None) -> dict:
 
     spotify_cache[search_key] = spotify_data
     return spotify_data
-
 
 def get_lyrics_from_genius(title: str, artist: str | None) -> str | None:
     search_key = f"{title}|{artist or ''}"
