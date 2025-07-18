@@ -86,7 +86,7 @@ If both Spotify accounts fail to initialize (e.g., no internet or API issues), t
   "Spotify API unavailable. Switching to offline mode. Only file names will be used for lyric search."
 - In this mode, the app will skip all Spotify lookups and use the file name (parsed as best as possible) for Genius lyric search.
 - This allows you to still check for profanity using only the information in your file names.
-
+- **For better performance insert a new spotify API key**
 ## What’s Left for the User
 
 - Set your own Genius and Spotify API credentials (see above).
