@@ -17,7 +17,8 @@ import requests
 from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3NoHeaderError
 from PIL import Image, ImageTk
-import threading
+
+# --- Logging setup ---
 class QueueHandler(logging.Handler):
     def __init__(self, log_queue):
         super().__init__()
@@ -27,18 +28,14 @@ class QueueHandler(logging.Handler):
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# --- API Credentials ---
 GENIUS_ACCESS_TOKEN = "eqzmComDvRqrsRFxh1caK40pEdbiWLQi2ddO5BU6_sNYiR-eQpyReFlAice5dbCX"
-
-# you can insert you spotify client here
-
 SPOTIPY_CLIENTS = [
-
     {
         'client_id': '9bbece559c344a4385aab976d35793c4',
         'client_secret': 'c7b219d11048464aa896da9b9096127b'
     },
     {
-
         'client_id': '72d3c94fa5af4dba99b86b3db9c09244',
         'client_secret': 'a891a7b7ae7b4c62996223266bd19b96'
     }
@@ -47,11 +44,15 @@ SPOTIPY_CLIENTS = [
 DEFAULT_BANNED_WORDS = {"fuck", "shit", "cunt", "asshole", "bitch", "dick", "pussy", "nigger", "faggot"}
 SPOTIFY_CACHE_FILE = 'spotify_cache.json'
 GENIUS_CACHE_FILE = 'genius_cache.json'
+
+# --- Globals ---
 spotify_cache, genius_cache = {}, {}
 sp_clients = [None, None]
 sp_current = 0
 genius = None
+OFFLINE_MODE = False
 
+# --- Cache helpers ---
 def load_cache(cache_file):
     if os.path.exists(cache_file):
         try:
@@ -65,13 +66,11 @@ def save_cache(cache_data, cache_file):
     with open(cache_file, 'w', encoding='utf-8') as f:
         json.dump(cache_data, f, ensure_ascii=False, indent=4)
 
-
-
+# --- Spotify/Genius Initialization ---
 def try_spotify_client(creds, idx, result_dict, event):
     try:
         auth_manager = SpotifyClientCredentials(client_id=creds['client_id'], client_secret=creds['client_secret'])
         sp = spotipy.Spotify(auth_manager=auth_manager, requests_timeout=15)
-        # Test connection
         if sp.search(q='track:test', type='track', limit=1):
             logging.info(f"Successfully connected to Spotify API (account {idx+1}).")
             result_dict['client'] = sp
@@ -83,7 +82,7 @@ def try_spotify_client(creds, idx, result_dict, event):
         logging.error(f"Error initializing Spotify API client {idx+1}: {e}")
 
 def initialize_apis_and_caches():
-    global sp_clients, sp_current, genius, spotify_cache, genius_cache
+    global sp_clients, sp_current, genius, spotify_cache, genius_cache, OFFLINE_MODE
     spotify_cache, genius_cache = load_cache(SPOTIFY_CACHE_FILE), load_cache(GENIUS_CACHE_FILE)
     logging.info(f"Loaded {len(spotify_cache)} items from Spotify cache and {len(genius_cache)} from Genius cache.")
 
@@ -95,20 +94,16 @@ def initialize_apis_and_caches():
         t = threading.Thread(target=try_spotify_client, args=(creds, i, result, event))
         threads.append(t)
         t.start()
-        # Wait up to 10 seconds for this client to succeed
         if event.wait(timeout=10):
-            break  # One client succeeded, stop starting new ones
+            break
 
-    # Wait for all threads to finish (in case both were started)
     for t in threads:
         t.join(timeout=1)
 
-    # Set up the clients array
     sp_clients[:] = [None, None]
     if 'client' in result:
         sp_clients[result['index']] = result['client']
         sp_current = result['index']
-        # Try to initialize the other client in the background (optional)
         for i, creds in enumerate(SPOTIPY_CLIENTS):
             if i != result['index']:
                 try:
@@ -118,10 +113,19 @@ def initialize_apis_and_caches():
                         logging.info(f"Background: Successfully connected to Spotify API (account {i+1}).")
                 except Exception as e:
                     logging.error(f"Background: Error initializing Spotify API client {i+1}: {e}")
+        OFFLINE_MODE = False
     else:
         logging.error("Could not initialize any Spotify API client.")
+        OFFLINE_MODE = True
+        try:
+            messagebox.showwarning(
+                "Spotify API Unavailable",
+                "Spotify API unavailable. Switching to offline mode.\n"
+                "Only file names will be used for lyric search."
+            )
+        except Exception:
+            print("Spotify API unavailable. Switching to offline mode. Only file names will be used for lyric search.")
 
-    # Genius initialization
     try:
         genius = lyricsgenius.Genius(GENIUS_ACCESS_TOKEN, verbose=False, remove_section_headers=True, timeout=15)
         logging.info("Successfully initialized LyricsGenius client.")
@@ -129,6 +133,7 @@ def initialize_apis_and_caches():
         logging.error(f"Error initializing LyricsGenius: {e}")
         genius = None
 
+# --- Crate file finder ---
 def find_crate_files(directory_path: str) -> list[str]:
     crate_files_to_process = []
     for root, _, files in os.walk(directory_path):
@@ -145,6 +150,7 @@ def find_crate_files(directory_path: str) -> list[str]:
                 logging.info(f"Skipping '{os.path.basename(original_path)}' as up-to-date '_CLEAN.crate' exists.")
     return crate_files_to_process
 
+# --- ProfanityFilter setup ---
 def get_profanity_filter(custom_words=None):
     pf = ProfanityFilter()
     if custom_words:
@@ -154,6 +160,7 @@ def get_profanity_filter(custom_words=None):
 def is_profane(lyrics: str, pf: ProfanityFilter) -> bool:
     return pf.is_profane(lyrics)
 
+# --- Song info extraction ---
 def get_initial_song_info(file_path: str) -> tuple[str, str | None]:
     try:
         audio = EasyID3(file_path)
@@ -171,12 +178,15 @@ def get_initial_song_info(file_path: str) -> tuple[str, str | None]:
     if match_artist_title: return match_artist_title.group(2).strip(), match_artist_title.group(1).strip()
     return cleaned_name, None
 
+# --- Spotify lookup (with offline mode) ---
 def get_spotify_data(title_query: str, artist_query: str | None) -> dict:
-    global sp_clients, sp_current
+    global sp_clients, sp_current, OFFLINE_MODE
     search_key = f"{title_query}|{artist_query or ''}"
     if search_key in spotify_cache: return spotify_cache[search_key]
 
-    # Try both clients if needed
+    if OFFLINE_MODE:
+        return {'title': title_query, 'artist': artist_query, 'genres': [], 'success': False, 'offline': True}
+
     attempts = [sp_current, 1 - sp_current]
     spotify_data = {'title': title_query, 'artist': artist_query, 'genres': [], 'success': False}
     q = f"track:{title_query}"
@@ -190,7 +200,7 @@ def get_spotify_data(title_query: str, artist_query: str | None) -> dict:
         for attempt in range(3):
             try:
                 results = sp.search(q=q, type='track', limit=1)
-                time.sleep(1.5)  # Add delay between requests
+                time.sleep(1.5)
                 if results and results['tracks']['items']:
                     track = results['tracks']['items'][0]
                     spotify_data.update({
@@ -205,7 +215,7 @@ def get_spotify_data(title_query: str, artist_query: str | None) -> dict:
                             spotify_data['genres'] = artist_results['artists']['items'][0].get('genres', [])
                     spotify_cache[search_key] = spotify_data
                     save_cache(spotify_cache, SPOTIFY_CACHE_FILE)
-                    sp_current = client_idx  # Use this client for next time
+                    sp_current = client_idx
                     return spotify_data
                 else:
                     if attempt == 2: break
@@ -214,11 +224,10 @@ def get_spotify_data(title_query: str, artist_query: str | None) -> dict:
                     retry_after = int(se.headers.get('Retry-After', 1))
                     retry_times.append(retry_after)
                     logging.warning(f"Spotify API {client_idx+1} rate limit hit. Retrying after {retry_after} seconds.")
-                    # If this is the last client, wait; otherwise, try the other client
                     if client_idx == attempts[-1]:
                         time.sleep(retry_after + 1)
                     else:
-                        break  # Try the other client
+                        break
                 else:
                     logging.error(f"Spotify API error for '{q}' (Attempt {attempt+1}): {se}")
                     break
@@ -226,7 +235,6 @@ def get_spotify_data(title_query: str, artist_query: str | None) -> dict:
                 logging.error(f"Spotify API error for '{q}' (Attempt {attempt+1}): {e}")
                 break
             time.sleep(1.5)
-    # If both clients fail, wait for the longest retry time if any
     if retry_times:
         max_retry = max(retry_times)
         logging.warning(f"Both Spotify accounts rate-limited. Waiting for {max_retry} seconds before continuing.")
@@ -235,6 +243,7 @@ def get_spotify_data(title_query: str, artist_query: str | None) -> dict:
     save_cache(spotify_cache, SPOTIFY_CACHE_FILE)
     return spotify_data
 
+# --- Genius lyrics lookup ---
 def get_lyrics_from_genius(title: str, artist: str | None) -> str | None:
     search_key = f"{title}|{artist or ''}"
     if search_key in genius_cache: return genius_cache[search_key]
@@ -258,6 +267,7 @@ def get_lyrics_from_genius(title: str, artist: str | None) -> str | None:
     genius_cache[search_key] = lyrics
     return lyrics
 
+# --- Crate processing ---
 def process_crate_file(crate_file_path: str, pause_event, stop_event, pf: ProfanityFilter):
     try:
         crate_data = srt.read_crate_file(crate_file_path)
@@ -276,22 +286,27 @@ def process_crate_file(crate_file_path: str, pause_event, stop_event, pf: Profan
         while pause_event.is_set():
             time.sleep(0.2)
         if item_type == 'otrk':
-            full_path = item_data[0][1] if isinstance(item_data, list) and item_data and item_data[0][
-                0] == 'ptrk' else None
+            full_path = item_data[0][1] if isinstance(item_data, list) and item_data and item_data[0][0] == 'ptrk' else None
             if not full_path:
                 results_summary["SKIPPED"] += 1
                 continue
             initial_title, initial_artist = get_initial_song_info(full_path)
-            if not initial_title:
-                results_summary["SKIPPED"] += 1
-                continue
-            spotify_data = get_spotify_data(initial_title, initial_artist)
-            if not spotify_data['success']:
-                results_summary["SKIPPED"] += 1
-                continue
-            verified_title, verified_artist = spotify_data['title'], spotify_data['artist']
-            logging.info(f"-> Checking: '{verified_title}' by '{verified_artist or 'Unknown'}'")
+            if OFFLINE_MODE:
+                verified_title, verified_artist = initial_title, initial_artist
+                artist_genres = []
+            else:
+                spotify_data = get_spotify_data(initial_title, initial_artist)
+                verified_title = spotify_data['title']
+                verified_artist = spotify_data['artist']
+                artist_genres = spotify_data['genres']
+
+            display_artist = verified_artist if verified_artist else 'Unknown'
+            logging.info(f"Processing: '{verified_title}' by '{display_artist}' (Original: '{os.path.basename(full_path)}')")
+            if artist_genres:
+                logging.info(f" -> Genres: {', '.join(artist_genres)}")
+
             lyrics = get_lyrics_from_genius(verified_title, verified_artist)
+
             if lyrics:
                 if not is_profane(lyrics, pf):
                     results_summary["CLEAN"] += 1
@@ -316,6 +331,7 @@ def process_crate_file(crate_file_path: str, pause_event, stop_event, pf: Profan
     else:
         logging.info("No clean songs found, so no new crate was created.")
 
+# --- GUI App class (unchanged except for using the above logic) ---
 class App:
     def __init__(self, root):
         self.root = root
@@ -332,7 +348,6 @@ class App:
         banner_frame.pack_propagate(False)
         banner_frame.pack(fill=tk.X, padx=0, pady=(0, 0))
 
-        # Instructions on the left
         instructions = (
             "Instructions:\n"
             "1. Click 'Browse' to select your Serato crate directory (e.g. _Serato_\\Subcrates folder).\n"
@@ -349,7 +364,6 @@ class App:
         )
         self.instr_label.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 10), pady=10)
 
-        # Logo on the right, scaled to fit vertically (max 80px)
         try:
             self.logo_img_orig = Image.open("dj_gadget_logo.png")
         except Exception:
@@ -369,7 +383,6 @@ class App:
         self.root.bind("<Configure>", resize_logo)
         banner_frame.bind("<Configure>", resize_logo)
 
-        # Crate directory box + Browse
         dir_frame = ttk.Frame(root, padding=(10, 0))
         dir_frame.pack(fill=tk.X, pady=(0, 5))
         ttk.Label(dir_frame, text="Crate Directory:", font=("Segoe UI", 10, "bold"), foreground="#0a3d91").pack(side=tk.LEFT)
@@ -378,7 +391,6 @@ class App:
         dir_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 5))
         ttk.Button(dir_frame, text="Browse", command=self.browse_dir).pack(side=tk.LEFT)
 
-        # Banned words option
         banned_option_frame = ttk.Frame(root, padding=(10, 0))
         banned_option_frame.pack(fill=tk.X, pady=(0, 0))
         self.banned_mode = tk.StringVar(value="default")
@@ -386,7 +398,6 @@ class App:
         ttk.Radiobutton(banned_option_frame, text="Default", variable=self.banned_mode, value="default", command=self.update_banned_mode).pack(side=tk.LEFT, padx=5)
         ttk.Radiobutton(banned_option_frame, text="Custom", variable=self.banned_mode, value="custom", command=self.update_banned_mode).pack(side=tk.LEFT, padx=5)
 
-        # Banned words text box
         banned_frame = ttk.Frame(root, padding=(10, 0))
         banned_frame.pack(fill=tk.X, pady=(0, 5))
         self.banned_text = tk.Text(banned_frame, height=2, width=60, font=("Segoe UI", 10))
@@ -394,7 +405,6 @@ class App:
         self.banned_text.insert(tk.END, ", ".join(sorted(DEFAULT_BANNED_WORDS)))
         self.banned_text.config(state='disabled')
 
-        # Crate selection with checkboxes (scrollable)
         select_frame = ttk.Frame(root, padding=(10, 0))
         select_frame.pack(fill=tk.X, pady=(0, 5))
         ttk.Label(select_frame, text="Select Crates to Process:", font=("Segoe UI", 10, "bold"), foreground="#0a3d91").pack(anchor=tk.W)
@@ -420,7 +430,6 @@ class App:
         ttk.Button(btns_frame, text="Select All", command=self.select_all).pack(side=tk.LEFT, padx=2)
         ttk.Button(btns_frame, text="Deselect All", command=self.deselect_all).pack(side=tk.LEFT, padx=2)
 
-        # Start, Pause, Stop buttons and progress bar
         btn_frame = ttk.Frame(root, padding=(10, 0))
         btn_frame.pack(fill=tk.X, pady=(5, 5))
         self.start_btn = ttk.Button(btn_frame, text="Start", command=self.start)
@@ -434,7 +443,6 @@ class App:
         self.percent_label = ttk.Label(btn_frame, text="0%")
         self.percent_label.pack(side=tk.LEFT)
 
-        # Log output
         log_frame = ttk.Frame(root, padding=(10, 0))
         log_frame.pack(fill=tk.BOTH, expand=True)
         ttk.Label(log_frame, text="Log Output:", font=("Segoe UI", 10, "bold"), foreground="#0a3d91").pack(anchor=tk.W)
@@ -571,7 +579,7 @@ class App:
 
         while True:
             initialize_apis_and_caches()
-            if (sp_clients[0] or sp_clients[1]) and genius:
+            if (sp_clients[0] or sp_clients[1]) or OFFLINE_MODE and genius:
                 break
             result = messagebox.askretrycancel(
                 "Internet/Spotify/Genius Error",
