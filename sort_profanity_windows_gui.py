@@ -32,6 +32,7 @@ GENIUS_ACCESS_TOKEN = "eqzmComDvRqrsRFxh1caK40pEdbiWLQi2ddO5BU6_sNYiR-eQpyReFlAi
 # Two Spotify accounts
 SPOTIPY_CLIENTS = [
     {
+
         'client_id': '72d3c94fa5af4dba99b86b3db9c09244',
         'client_secret': 'a891a7b7ae7b4c62996223266bd19b96'
     },
