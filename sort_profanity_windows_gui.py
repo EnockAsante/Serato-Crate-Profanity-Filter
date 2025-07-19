@@ -10,6 +10,18 @@ genius = None
 
 
 def initialize_apis_and_caches():
+    """
+    Initialize Spotify and Genius API clients and load their caches.
+
+    Loads cached data for Spotify and Genius, attempts to connect to Spotify using available credentials,
+    and initializes the Genius API client. Sets the application to offline mode if no Spotify client is available.
+
+    Globals Modified:
+        sp_clients, sp_current, genius, spotify_cache, genius_cache, OFFLINE_MODE
+
+    Logs:
+        Number of cache items loaded, API connection status, and errors.
+    """
     global sp_clients, sp_current, genius, spotify_cache, genius_cache, OFFLINE_MODE
     spotify_cache, genius_cache = load_cache(SPOTIFY_CACHE_FILE), load_cache(GENIUS_CACHE_FILE)
     logging.info(f"Loaded {len(spotify_cache)} items from Spotify cache and {len(genius_cache)} from Genius cache.")
@@ -69,6 +81,15 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # --- ProfanityFilter setup ---
 def get_profanity_filter(custom_words=None):
+    """
+    Create and return a ProfanityFilter instance, optionally with custom words.
+
+    Args:
+        custom_words (iterable, optional): Custom words to add to the profanity filter.
+
+    Returns:
+        ProfanityFilter: Configured profanity filter instance.
+    """
     pf = ProfanityFilter()
     if custom_words:
         pf.define_words(list(custom_words))
@@ -76,11 +97,31 @@ def get_profanity_filter(custom_words=None):
 
 
 def is_profane(lyrics: str, pf: ProfanityFilter) -> bool:
+    """
+    Check if the given lyrics contain profanity using the provided ProfanityFilter.
+
+    Args:
+        lyrics (str): Lyrics to check.
+        pf (ProfanityFilter): ProfanityFilter instance.
+
+    Returns:
+        bool: True if lyrics are profane, False otherwise.
+    """
     return pf.is_profane(lyrics)
 
 
 # --- Spotify lookup (with offline mode) ---
 def get_spotify_data(title_query: str, artist_query: str | None) -> dict:
+    """
+    Retrieve song and artist data from Spotify, with offline mode fallback.
+
+    Args:
+        title_query (str): Song title to search for.
+        artist_query (str or None): Artist name to search for.
+
+    Returns:
+        dict: Dictionary containing song title, artist, genres, and success status.
+    """
     global sp_clients, sp_current, OFFLINE_MODE
     search_key = f"{title_query}|{artist_query or ''}"
     if search_key in spotify_cache: return spotify_cache[search_key]
@@ -147,7 +188,18 @@ def get_spotify_data(title_query: str, artist_query: str | None) -> dict:
 
 
 # --- Genius lyrics lookup ---
-def get_lyrics_from_genius(title: str, artist: str | None, genius) -> str | None:
+def get_lyrics_from_genius(title: str, artist: str | None) -> str | None:
+    """
+    Retrieve lyrics for a song from Genius, with caching and retry logic.
+
+    Args:
+        title (str): Song title.
+        artist (str or None): Artist name.
+        genius: LyricsGenius client instance.
+
+    Returns:
+        str or None: Lyrics if found, otherwise None.
+    """
     search_key = f"{title}|{artist or ''}"
     if search_key in genius_cache: return genius_cache[search_key]
     if not genius: return None
@@ -173,6 +225,18 @@ def get_lyrics_from_genius(title: str, artist: str | None, genius) -> str | None
 
 # --- Crate processing ---
 def process_crate_file(crate_file_path: str, pause_event, stop_event, pf: ProfanityFilter):
+    """
+    Process a .crate file, filter songs based on profanity, and create a clean crate.
+
+    Args:
+        crate_file_path (str): Path to the .crate file.
+        pause_event: Threading event to pause processing.
+        stop_event: Threading event to stop processing.
+        pf (ProfanityFilter): ProfanityFilter instance.
+
+    Logs:
+        Processing status, summary, and errors.
+    """
     try:
         crate_data = srt.read_crate_file(crate_file_path)
     except Exception as e:
@@ -211,7 +275,7 @@ def process_crate_file(crate_file_path: str, pause_event, stop_event, pf: Profan
             if artist_genres:
                 logging.info(f" -> Genres: {', '.join(artist_genres)}")
 
-            lyrics = get_lyrics_from_genius(verified_title, verified_artist, genius)
+            lyrics = get_lyrics_from_genius(verified_title, verified_artist)
 
             if lyrics:
                 if not is_profane(lyrics, pf):
@@ -224,7 +288,10 @@ def process_crate_file(crate_file_path: str, pause_event, stop_event, pf: Profan
 
     logging.info(f"--- Summary for {os.path.basename(crate_file_path)} ---")
     logging.info(
-        f"Clean: {results_summary['CLEAN']}, Profane: {results_summary['PROFANE']}, No Lyrics: {results_summary['NO_LYRICS']}, Skipped: {results_summary['SKIPPED']}")
+        f"Clean: {results_summary['CLEAN']}, "
+        f"Profane: {results_summary['PROFANE']}, "
+        # f"No Lyrics: {results_summary['NO_LYRICS']}, "
+        f"Skipped: {results_summary['SKIPPED']}")
 
     if clean_song_paths:
         dir_name, base_name = os.path.split(crate_file_path)

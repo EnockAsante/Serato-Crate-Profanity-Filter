@@ -38,6 +38,15 @@ OFFLINE_MODE = False
 
 # --- Cache helpers ---
 def load_cache(cache_file):
+    """
+    Load cached data from a JSON file.
+
+    Args:
+        cache_file (str): Path to the cache file.
+
+    Returns:
+        dict: Cached data if file exists and is valid, otherwise an empty dict.
+    """
     if os.path.exists(cache_file):
         try:
             with open(cache_file, 'r', encoding='utf-8') as f:
@@ -48,6 +57,13 @@ def load_cache(cache_file):
 
 
 def save_cache(cache_data, cache_file):
+    """
+    Save data to a JSON cache file.
+
+    Args:
+        cache_data (dict): Data to be cached.
+        cache_file (str): Path to the cache file.
+    """
     with open(cache_file, 'w', encoding='utf-8') as f:
         json.dump(cache_data, f, ensure_ascii=False, indent=4)
 
@@ -56,6 +72,18 @@ def save_cache(cache_data, cache_file):
 
 # --- Spotify/Genius Initialization ---
 def try_spotify_client(creds, idx, result_dict, event):
+    """
+    Attempt to initialize a Spotify API client with provided credentials.
+
+    Args:
+        creds (dict): Spotify API credentials (client_id, client_secret).
+        idx (int): Index of the credential set (for logging).
+        result_dict (dict): Dictionary to store the initialized client and index.
+        event (threading.Event): Event to signal successful initialization.
+
+    Logs:
+        Success or failure of the Spotify API connection.
+    """
     try:
         auth_manager = SpotifyClientCredentials(client_id=creds['client_id'], client_secret=creds['client_secret'])
         sp = spotipy.Spotify(auth_manager=auth_manager, requests_timeout=15)
@@ -74,6 +102,15 @@ def try_spotify_client(creds, idx, result_dict, event):
 
 # --- Crate file finder ---
 def find_crate_files(directory_path: str) -> list[str]:
+    """
+    Find .crate files in a directory that need processing.
+
+    Args:
+        directory_path (str): Path to the directory to search.
+
+    Returns:
+        list[str]: List of .crate file paths that require processing.
+    """
     crate_files_to_process = []
     for root, _, files in os.walk(directory_path):
         for file in files:
@@ -92,6 +129,15 @@ def find_crate_files(directory_path: str) -> list[str]:
 
 # --- Song info extraction ---
 def get_initial_song_info(file_path: str) -> tuple[str, str | None]:
+    """
+    Extract initial song title and artist from an audio file or its filename.
+
+    Args:
+        file_path (str): Path to the audio file.
+
+    Returns:
+        tuple: (title, artist) if found, otherwise (cleaned filename, None).
+    """
     try:
         audio = EasyID3(file_path)
         title = audio.get('title', [None])[0]
