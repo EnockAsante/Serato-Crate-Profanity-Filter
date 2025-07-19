@@ -1,9 +1,8 @@
-import queue
-from header import *
 from PIL import Image, ImageTk
 import tkinter as tk
-from sort_profanity_windows_gui import get_profanity_filter, process_crate_file
-
+from sort_profanity_windows_gui import *
+from header import *
+import queue
 
 class QueueHandler(logging.Handler):
     def __init__(self, log_queue):

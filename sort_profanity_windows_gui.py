@@ -1,9 +1,67 @@
-import re
-import serato_crate.serato_crate as srt
-from profanityfilter import ProfanityFilter
-import requests
 from gui_setup import *
 from header import *
+import re
+import requests
+import serato_crate.serato_crate as srt
+from profanityfilter import ProfanityFilter
+
+# --- Globals ---
+genius = None
+
+
+def initialize_apis_and_caches():
+    global sp_clients, sp_current, genius, spotify_cache, genius_cache, OFFLINE_MODE
+    spotify_cache, genius_cache = load_cache(SPOTIFY_CACHE_FILE), load_cache(GENIUS_CACHE_FILE)
+    logging.info(f"Loaded {len(spotify_cache)} items from Spotify cache and {len(genius_cache)} from Genius cache.")
+
+    # Try to initialize one Spotify client at a time, but don't wait forever
+    result = {}
+    event = threading.Event()
+    threads = []
+    for i, creds in enumerate(SPOTIPY_CLIENTS):
+        t = threading.Thread(target=try_spotify_client, args=(creds, i, result, event))
+        threads.append(t)
+        t.start()
+        if event.wait(timeout=10):
+            break
+
+    for t in threads:
+        t.join(timeout=1)
+
+    sp_clients[:] = [None, None]
+    if 'client' in result:
+        sp_clients[result['index']] = result['client']
+        sp_current = result['index']
+        for i, creds in enumerate(SPOTIPY_CLIENTS):
+            if i != result['index']:
+                try:
+                    auth_manager = SpotifyClientCredentials(client_id=creds['client_id'],
+                                                            client_secret=creds['client_secret'])
+                    sp_clients[i] = spotipy.Spotify(auth_manager=auth_manager, requests_timeout=15)
+                    if sp_clients[i].search(q='track:test', type='track', limit=1):
+                        logging.info(f"Background: Successfully connected to Spotify API (account {i + 1}).")
+                except Exception as e:
+                    logging.error(f"Background: Error initializing Spotify API client {i + 1}: {e}")
+        OFFLINE_MODE = False
+    else:
+        logging.error("Could not initialize any Spotify API client.")
+        OFFLINE_MODE = True
+        try:
+            messagebox.showwarning(
+                "Spotify API Unavailable",
+                "Spotify API unavailable. Switching to offline mode.\n"
+                "Only file names will be used for lyric search."
+            )
+        except Exception:
+            print("Spotify API unavailable. Switching to offline mode. Only file names will be used for lyric search.")
+
+    try:
+        genius = lyricsgenius.Genius(GENIUS_ACCESS_TOKEN, verbose=False, remove_section_headers=True, timeout=15)
+        logging.info("Successfully initialized LyricsGenius client.")
+    except Exception as e:
+        logging.error(f"Error initializing LyricsGenius: {e}")
+        genius = None
+
 
 # --- Logging setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -89,7 +147,7 @@ def get_spotify_data(title_query: str, artist_query: str | None) -> dict:
 
 
 # --- Genius lyrics lookup ---
-def get_lyrics_from_genius(title: str, artist: str | None) -> str | None:
+def get_lyrics_from_genius(title: str, artist: str | None, genius) -> str | None:
     search_key = f"{title}|{artist or ''}"
     if search_key in genius_cache: return genius_cache[search_key]
     if not genius: return None
@@ -153,7 +211,7 @@ def process_crate_file(crate_file_path: str, pause_event, stop_event, pf: Profan
             if artist_genres:
                 logging.info(f" -> Genres: {', '.join(artist_genres)}")
 
-            lyrics = get_lyrics_from_genius(verified_title, verified_artist)
+            lyrics = get_lyrics_from_genius(verified_title, verified_artist, genius)
 
             if lyrics:
                 if not is_profane(lyrics, pf):

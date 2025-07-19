@@ -2,25 +2,20 @@ import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 import logging
 import json
-import lyricsgenius
-import threading
 import os
 import re
-from tkinter import ttk, filedialog, messagebox
-import time
 import unicodedata
 from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3NoHeaderError
+import lyricsgenius
+import threading
+from tkinter import ttk, filedialog, messagebox
+import time
 
-# --- Globals ---
+
 spotify_cache, genius_cache = {}, {}
 sp_clients = [None, None]
 sp_current = 0
-genius = None
-OFFLINE_MODE = False
-DEFAULT_BANNED_WORDS = {"fuck", "shit", "cunt", "asshole", "bitch", "dick", "pussy", "nigger", "faggot"}
-SPOTIFY_CACHE_FILE = 'spotify_cache.json'
-GENIUS_CACHE_FILE = 'genius_cache.json'
 
 # --- API Credentials ---
 GENIUS_ACCESS_TOKEN = "eqzmComDvRqrsRFxh1caK40pEdbiWLQi2ddO5BU6_sNYiR-eQpyReFlAice5dbCX"
@@ -34,6 +29,11 @@ SPOTIPY_CLIENTS = [
         'client_secret': 'a891a7b7ae7b4c62996223266bd19b96'
     }
 ]
+
+DEFAULT_BANNED_WORDS = {"fuck", "shit", "cunt", "asshole", "bitch", "dick", "pussy", "nigger", "faggot"}
+SPOTIFY_CACHE_FILE = 'spotify_cache.json'
+GENIUS_CACHE_FILE = 'genius_cache.json'
+OFFLINE_MODE = False
 
 
 # --- Cache helpers ---
@@ -69,59 +69,6 @@ def try_spotify_client(creds, idx, result_dict, event):
     except Exception as e:
         logging.error(f"Error initializing Spotify API client {idx + 1}: {e}")
 
-
-def initialize_apis_and_caches():
-    global sp_clients, sp_current, genius, spotify_cache, genius_cache, OFFLINE_MODE
-    spotify_cache, genius_cache = load_cache(SPOTIFY_CACHE_FILE), load_cache(GENIUS_CACHE_FILE)
-    logging.info(f"Loaded {len(spotify_cache)} items from Spotify cache and {len(genius_cache)} from Genius cache.")
-
-    # Try to initialize one Spotify client at a time, but don't wait forever
-    result = {}
-    event = threading.Event()
-    threads = []
-    for i, creds in enumerate(SPOTIPY_CLIENTS):
-        t = threading.Thread(target=try_spotify_client, args=(creds, i, result, event))
-        threads.append(t)
-        t.start()
-        if event.wait(timeout=10):
-            break
-
-    for t in threads:
-        t.join(timeout=1)
-
-    sp_clients[:] = [None, None]
-    if 'client' in result:
-        sp_clients[result['index']] = result['client']
-        sp_current = result['index']
-        for i, creds in enumerate(SPOTIPY_CLIENTS):
-            if i != result['index']:
-                try:
-                    auth_manager = SpotifyClientCredentials(client_id=creds['client_id'],
-                                                            client_secret=creds['client_secret'])
-                    sp_clients[i] = spotipy.Spotify(auth_manager=auth_manager, requests_timeout=15)
-                    if sp_clients[i].search(q='track:test', type='track', limit=1):
-                        logging.info(f"Background: Successfully connected to Spotify API (account {i + 1}).")
-                except Exception as e:
-                    logging.error(f"Background: Error initializing Spotify API client {i + 1}: {e}")
-        OFFLINE_MODE = False
-    else:
-        logging.error("Could not initialize any Spotify API client.")
-        OFFLINE_MODE = True
-        try:
-            messagebox.showwarning(
-                "Spotify API Unavailable",
-                "Spotify API unavailable. Switching to offline mode.\n"
-                "Only file names will be used for lyric search."
-            )
-        except Exception:
-            print("Spotify API unavailable. Switching to offline mode. Only file names will be used for lyric search.")
-
-    try:
-        genius = lyricsgenius.Genius(GENIUS_ACCESS_TOKEN, verbose=False, remove_section_headers=True, timeout=15)
-        logging.info("Successfully initialized LyricsGenius client.")
-    except Exception as e:
-        logging.error(f"Error initializing LyricsGenius: {e}")
-        genius = None
 
 # ------------------common dependencies------------------
 
@@ -160,5 +107,3 @@ def get_initial_song_info(file_path: str) -> tuple[str, str | None]:
     match_artist_title = re.search(r'(.+?)\s-\s(.+)$', cleaned_name)
     if match_artist_title: return match_artist_title.group(2).strip(), match_artist_title.group(1).strip()
     return cleaned_name, None
-
-
